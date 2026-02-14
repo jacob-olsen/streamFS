@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -13,6 +12,13 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
+
+type StreamRoot struct {
+	fs.Inode
+}
+type StreamFile struct {
+	fs.Inode
+}
 
 func main() {
 	mountPoint := flag.String("mnt", "./mnt", "Directory to mount the filesystem")
@@ -57,18 +63,8 @@ func main() {
 	server.Wait()
 }
 
-type StreamRoot struct {
-	fs.Inode
-}
-
 func (f *StreamRoot) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	var entries []fuse.DirEntry
-
-	entries = append(entries, fuse.DirEntry{
-		Name: "remote_game_file.dat",
-		Mode: fuse.S_IFREG,
-		Ino:  10,
-	})
 
 	entries = append(entries, fuse.DirEntry{
 		Name: "local_cache_log.txt",
@@ -81,22 +77,42 @@ func (f *StreamRoot) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 
 func (r *StreamRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 
-	if name == "remote_game_file.dat" || name == "local_cache_log.txt" {
+	if name == "local_cache_log.txt" {
 
-		fileLogic := &fs.MemRegularFile{
-			Data: []byte("Data for " + name),
-			Attr: fuse.Attr{Mode: 0644},
+		fileLogic := &StreamFile{}
+		//r.StableAttr().Ino
+
+		stable := fs.StableAttr{
+			Mode: fuse.S_IFREG,
+			Ino:  11,
 		}
-		fmt.Println(r.StableAttr().Ino)
-
-		stable := fs.StableAttr{Mode: fuse.S_IFREG}
-		child := r.NewPersistentInode(ctx, fileLogic, stable)
+		child := r.NewInode(ctx, fileLogic, stable)
 
 		out.Attr.Mode = fuse.S_IFREG | 0644
-		out.Attr.Size = uint64(len("Data for " + name))
+		out.Attr.Size = uint64(len("This is the raw data inside the file.\nIt works!"))
 
 		return child, 0
 	}
 
 	return nil, syscall.ENOENT
+}
+
+func (f *StreamFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	//file trust
+	return nil, 0, 0
+}
+
+func (f *StreamFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	fullContent := []byte("This is the raw data inside the file.\nIt works!")
+
+	end := int(off) + len(dest)
+	if end > len(fullContent) {
+		end = len(fullContent)
+	}
+
+	if int(off) >= len(fullContent) {
+		return fuse.ReadResultData(nil), 0
+	}
+
+	return fuse.ReadResultData(fullContent[off:end]), 0
 }

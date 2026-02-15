@@ -23,6 +23,9 @@ type StreamRoot struct {
 type StreamFile struct {
 	fs.Inode
 }
+type StreamLink struct {
+	fs.Inode
+}
 
 func main() {
 	mountPoint := flag.String("mnt", "./mnt", "Directory to mount the filesystem")

@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -40,17 +41,29 @@ func main() {
 	initDB(*sql)
 	defer db.Close()
 
+	_, _, rootMode, _, rootUid, rootGid, _, _, _, mising := DB_Getattr(1)
+	if mising {
+		fmt.Println("mount faild root Folder is mising")
+		return
+	}
+
 	root := &StreamRoot{}
 
 	sec := time.Second
 	opts := &fs.Options{
 		AttrTimeout:  &sec,
 		EntryTimeout: &sec,
+		UID:          rootUid,
+		GID:          rootGid,
 		MountOptions: fuse.MountOptions{
 			Debug:      *debug,
 			AllowOther: true,
 			Name:       "streamfs",
 			FsName:     "StreamFS",
+		},
+		RootStableAttr: &fs.StableAttr{
+			Mode: rootMode,
+			Ino:  1,
 		},
 	}
 

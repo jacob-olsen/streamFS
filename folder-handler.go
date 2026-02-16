@@ -12,7 +12,13 @@ import (
 func (r *StreamRoot) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	var entries []fuse.DirEntry
 
-	entries = DB_List_meta(r.StableAttr().Ino)
+	entries = append(entries, fuse.DirEntry{
+		Name: ".",
+		Mode: r.StableAttr().Mode,
+		Ino:  r.StableAttr().Ino,
+	})
+
+	entries = append(entries, DB_List_meta(r.StableAttr().Ino)...)
 
 	return fs.NewListDirStream(entries), 0
 }
@@ -60,6 +66,24 @@ func (r *StreamRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 	}
 }
 
+func (r *StreamRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	_, _, mode, size, uid, gid, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
+	if mising {
+		return syscall.ENOENT
+	}
+
+	out.Attr.Size = size
+	out.Attr.Uid = uid
+	out.Attr.Gid = gid
+	out.Attr.Mtime = mtime
+	out.Attr.Atime = atime
+	out.Attr.Ctime = ctime
+	out.Attr.Mode = mode
+	out.Nlink = 2 //fix
+
+	return fs.OK
+}
+
 func (r *StreamRoot) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 
 	caller, ok := fuse.FromContext(ctx)
@@ -80,4 +104,16 @@ func (r *StreamRoot) Mkdir(ctx context.Context, name string, mode uint32, out *f
 	out.Attr.Ino = stable.Ino
 
 	return child, 0
+}
+func (r *StreamRoot) Rmdir(ctx context.Context, name string) syscall.Errno {
+	dbID, _, _, _, _, _, _, _, mising := DB_Lookup_meta(r.StableAttr().Ino, name)
+	if mising {
+		return syscall.ENOENT
+	}
+	entries := DB_List_meta(uint64(dbID))
+	if len(entries) > 0 {
+		return syscall.ENOTEMPTY
+	}
+	DB_rm_meta(r.StableAttr().Ino, name)
+	return 0
 }

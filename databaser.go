@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -69,10 +70,18 @@ func initDB(dbPath string) {
 	_, _, _, _, _, _, _, _, _, mising := DB_Getattr(1)
 	if mising {
 		log.Println("making root folder")
-		DB_mkDir(0, "ROOTFOLDER", 0, 0, fuse.S_IFDIR|0755)
+		uid := os.Getuid()
+		gid := os.Getgid()
+		if uid < 0 {
+			uid = 0
+		}
+		if gid < 0 {
+			gid = 0
+		}
+		DB_mkMeta(0, "ROOTFOLDER", uint32(uid), uint32(gid), fuse.S_IFDIR|0755)
 	}
 }
-func DB_mkDir(parentID uint64, name string, uid uint32, gid uint32, mode uint32) (uint64, error) {
+func DB_mkMeta(parentID uint64, name string, uid uint32, gid uint32, mode uint32) (uint64, error) {
 	var err error
 	now := time.Now().Unix()
 	var newInode uint64
@@ -101,7 +110,7 @@ func DB_mkDir(parentID uint64, name string, uid uint32, gid uint32, mode uint32)
 			newInode,
 		).Scan(&newInode)
 		if err != nil {
-			fmt.Println("mkdir faild")
+			fmt.Println("mkMeta faild")
 			fmt.Println(err)
 			return 0, err
 		}
@@ -132,7 +141,7 @@ func DB_mkDir(parentID uint64, name string, uid uint32, gid uint32, mode uint32)
 		now,
 	).Scan(&newInode)
 	if err != nil {
-		fmt.Println("mkdir faild")
+		fmt.Println("mkMeta faild")
 		fmt.Println(err)
 		return 0, err
 	}
@@ -194,6 +203,22 @@ func DB_Getattr(inod uint64) (name string, parentID uint64, mode uint32, size ui
 		log.Printf("DB Lookup Error: %v", err)
 		mising = true
 	}
+	return
+}
+func DB_Setattr(inod uint64, mode uint32, size uint64, uid uint32, gid uint32, mtime uint64, atime uint64, ctime uint64) (err error) {
+	_, err = db.Exec(`
+		UPDATE meta SET
+		is_deleted=0,
+		uid=?,
+		gid=?,
+		mode=?,
+		size=?, 
+    	atime=?,
+		mtime=?,
+		ctime=?,
+		is_dirty=1
+		WHERE id = ?`,
+		uid, gid, mode, size, atime, mtime, ctime, inod)
 	return
 }
 func DB_rm_meta(parentID uint64, name string) {

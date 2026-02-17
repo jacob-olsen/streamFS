@@ -37,6 +37,7 @@ func (r *StreamRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 	out.Attr.Mtime = mtime
 	out.Attr.Atime = atime
 	out.Attr.Ctime = ctime
+	out.Attr.Mode = dbMode
 
 	switch dbMode & syscall.S_IFMT {
 	case fuse.S_IFDIR:
@@ -83,7 +84,6 @@ func (r *StreamRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.At
 
 	return fs.OK
 }
-
 func (r *StreamRoot) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 
 	caller, ok := fuse.FromContext(ctx)
@@ -92,7 +92,7 @@ func (r *StreamRoot) Mkdir(ctx context.Context, name string, mode uint32, out *f
 		return nil, syscall.EIO
 	}
 
-	id, _ := DB_mkDir(r.StableAttr().Ino, name, caller.Uid, caller.Gid, fuse.S_IFDIR|0755)
+	id, _ := DB_mkMeta(r.StableAttr().Ino, name, caller.Uid, caller.Gid, fuse.S_IFDIR|0755)
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFDIR,
 		Ino:  uint64(id),

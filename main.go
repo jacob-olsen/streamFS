@@ -81,7 +81,15 @@ func main() {
 	go func() {
 		<-c
 		log.Println("\nReceived signal, unmounting...")
-		server.Unmount()
+		for true {
+			uErr := server.Unmount()
+			if uErr == nil {
+				log.Println("Unmount successful.")
+				break
+			}
+			log.Printf("Unmount busy/failed (%v). Retrying in 1s...", uErr)
+			time.Sleep(1 * time.Second)
+		}
 	}()
 
 	server.Wait()

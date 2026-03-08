@@ -115,5 +115,13 @@ func (r *StreamRoot) Rmdir(ctx context.Context, name string) syscall.Errno {
 		return syscall.ENOTEMPTY
 	}
 	DB_rm_meta(r.StableAttr().Ino, name)
-	return 0
+	return fs.OK
+}
+func (d *StreamRoot) Unlink(ctx context.Context, name string) syscall.Errno {
+	mising := DB_rm_meta(d.StableAttr().Ino, name)
+
+	if mising {
+		return syscall.ENOENT // File doesn't exist
+	}
+	return fs.OK
 }

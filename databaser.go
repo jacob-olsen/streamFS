@@ -221,10 +221,34 @@ func DB_Setattr(inod uint64, mode uint32, size uint64, uid uint32, gid uint32, m
 		uid, gid, mode, size, atime, mtime, ctime, inod)
 	return
 }
-func DB_rm_meta(parentID uint64, name string) {
-	_, err := db.Exec(`UPDATE meta SET is_deleted=1, is_dirty=1 WHERE parent_id = ? AND name = ?`, parentID, name)
+func DB_rm_meta(parentID uint64, name string) (mising bool) {
+	tx, err := db.Begin()
 	if err != nil {
-		fmt.Println("soft delet faild")
-		fmt.Println(err)
+		fmt.Println("Failed to start transaction:", err)
+		return true
 	}
+
+	res, err := tx.Exec(`UPDATE meta SET is_deleted=1, is_dirty=1 WHERE parent_id = ? AND name = ? AND is_deleted = 0`, parentID, name)
+	if err != nil {
+		fmt.Println("Soft delete failed:", err)
+		tx.Rollback()
+		return true
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		tx.Rollback()
+		return true
+	}
+
+	now := uint64(time.Now().Unix())
+	_, err = tx.Exec(`UPDATE meta SET mtime=?, ctime=?, is_dirty=1 WHERE id=?`, now, now, parentID)
+	if err != nil {
+		fmt.Println("Parent time update failed:", err)
+		tx.Rollback()
+		return true
+	}
+
+	tx.Commit()
+	return false
 }

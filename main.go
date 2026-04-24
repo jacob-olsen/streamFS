@@ -41,7 +41,7 @@ func main() {
 	initDB(*sql)
 	defer db.Close()
 
-	_, _, rootMode, _, rootUid, rootGid, _, _, _, mising := DB_Getattr(1)
+	_, _, rootMode, _, rootUid, rootGid, _, _, _, _, mising := DB_Getattr(1)
 	if mising {
 		fmt.Println("mount faild root Folder is mising")
 		return

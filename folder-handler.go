@@ -70,7 +70,7 @@ func (r *StreamRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 }
 
 func (r *StreamRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	_, _, mode, size, uid, gid, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
+	_, _, mode, size, uid, gid, Nlink, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
 	if mising {
 		return syscall.ENOENT
 	}
@@ -82,7 +82,7 @@ func (r *StreamRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.At
 	out.Attr.Atime = atime
 	out.Attr.Ctime = ctime
 	out.Attr.Mode = mode
-	out.Nlink = 2 //fix
+	out.Nlink = Nlink
 
 	return fs.OK
 }
@@ -92,7 +92,7 @@ func (r *StreamRoot) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.Set
 
 	fmt.Printf("DEBUG: SetAttr called on Inode %d with Mode %o\n", r.StableAttr().Ino, in.Mode)
 
-	_, _, mode, size, uid, gid, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
+	_, _, mode, size, uid, gid, _, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
 	if mising {
 		return syscall.ENOENT
 	}
@@ -200,11 +200,11 @@ func (r *StreamRoot) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if len(entries) > 0 {
 		return syscall.ENOTEMPTY
 	}
-	DB_rm_meta(r.StableAttr().Ino, name)
+	DB_rm_meta(r.StableAttr().Ino, name, true)
 	return fs.OK
 }
 func (d *StreamRoot) Unlink(ctx context.Context, name string) syscall.Errno {
-	mising := DB_rm_meta(d.StableAttr().Ino, name)
+	mising := DB_rm_meta(d.StableAttr().Ino, name, false)
 
 	if mising {
 		return syscall.ENOENT // File doesn't exist

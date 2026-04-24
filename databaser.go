@@ -33,6 +33,7 @@ func initDB(dbPath string) {
     	size INTEGER DEFAULT 0,
     	uid INTEGER DEFAULT 0,
     	gid INTEGER DEFAULT 0,
+		nlink INTEGER DEFAULT 1,
     
 		mtime INTEGER NOT NULL DEFAULT (unixepoch()), 
     	atime INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -69,7 +70,7 @@ func initDB(dbPath string) {
 
 	log.Println("Database initialized successfully.")
 
-	_, _, _, _, _, _, _, _, _, mising := DB_Getattr(1)
+	_, _, _, _, _, _, _, _, _, _, mising := DB_Getattr(1)
 	if mising {
 		log.Println("making root folder")
 		uid := os.Getuid()
@@ -88,36 +89,6 @@ func DB_mkMeta(parentID uint64, name string, uid uint32, gid uint32, mode uint32
 	now := time.Now().Unix()
 	var newInode uint64
 	fmt.Println("make folder")
-
-	err = db.QueryRow("SELECT id FROM meta WHERE parent_id=? AND name=? AND is_deleted=1", parentID, name).Scan(&newInode)
-	if err == nil {
-		err = db.QueryRow(`
-		UPDATE meta SET
-		is_deleted=0,
-		uid=?,
-		gid=?,
-		mode=?,
-		size=0, 
-    	atime=?,
-		mtime=?,
-		ctime=?,
-		is_dirty=1
-		WHERE id = ?`,
-			uid,
-			gid,
-			mode,
-			now,
-			now,
-			now,
-			newInode,
-		).Scan(&newInode)
-		if err != nil {
-			fmt.Println("mkMeta faild")
-			fmt.Println(err)
-			return 0, err
-		}
-		return newInode, nil
-	}
 
 	err = db.QueryRow(`
 		INSERT INTO meta (
@@ -146,6 +117,14 @@ func DB_mkMeta(parentID uint64, name string, uid uint32, gid uint32, mode uint32
 		fmt.Println("mkMeta faild")
 		fmt.Println(err)
 		return 0, err
+	}
+	if mode&syscall.S_IFMT == syscall.S_IFDIR {
+		err = DB_Recalculate_Nlink(parentID)
+		if err != nil {
+			fmt.Println("Recalculate Nlink faild")
+			fmt.Println(err)
+			return 0, err
+		}
 	}
 	return newInode, nil
 }
@@ -191,12 +170,12 @@ func DB_Lookup_meta(parentID uint64, name string) (ID int, mode uint32, size uin
 	}
 	return
 }
-func DB_Getattr(inod uint64) (name string, parentID uint64, mode uint32, size uint64, uid uint32, gid uint32, mtime uint64, atime uint64, ctime uint64, mising bool) {
+func DB_Getattr(inod uint64) (name string, parentID uint64, mode uint32, size uint64, uid uint32, gid uint32, Nlink uint32, mtime uint64, atime uint64, ctime uint64, mising bool) {
 	err := db.QueryRow(`
-        SELECT name ,parent_id, mode, size, atime, mtime, ctime, uid, gid 
+        SELECT name ,parent_id, mode, size, atime, mtime, ctime, uid, gid, nlink 
         FROM meta 
         WHERE id = ? AND is_deleted = 0`,
-		inod).Scan(&name, &parentID, &mode, &size, &atime, &mtime, &ctime, &uid, &gid)
+		inod).Scan(&name, &parentID, &mode, &size, &atime, &mtime, &ctime, &uid, &gid, &Nlink)
 	if err == sql.ErrNoRows {
 		mising = true // Normal "Not Found"
 		return
@@ -223,14 +202,14 @@ func DB_Setattr(inod uint64, mode uint32, size uint64, uid uint32, gid uint32, m
 		uid, gid, mode, size, atime, mtime, ctime, inod)
 	return
 }
-func DB_rm_meta(parentID uint64, name string) (mising bool) {
+func DB_rm_meta(parentID uint64, name string, is_dir bool) (mising bool) {
 	tx, err := db.Begin()
 	if err != nil {
 		fmt.Println("Failed to start transaction:", err)
 		return true
 	}
 
-	res, err := tx.Exec(`UPDATE meta SET is_deleted=1, is_dirty=1 WHERE parent_id = ? AND name = ? AND is_deleted = 0`, parentID, name)
+	res, err := tx.Exec(`UPDATE meta SET is_deleted=1, is_dirty=1,name = 'remove/' || id WHERE parent_id = ? AND name = ? AND is_deleted = 0`, parentID, name)
 	if err != nil {
 		fmt.Println("Soft delete failed:", err)
 		tx.Rollback()
@@ -252,6 +231,13 @@ func DB_rm_meta(parentID uint64, name string) (mising bool) {
 	}
 
 	tx.Commit()
+	if is_dir {
+		err = DB_Recalculate_Nlink(parentID)
+		if err != nil {
+			fmt.Println("Recalculate Nlink faild")
+			fmt.Println(err)
+		}
+	}
 	return false
 }
 func DB_rename_meta(oldParentID uint64, oldName string, newParentID uint64, newName string) syscall.Errno {
@@ -305,5 +291,38 @@ func DB_rename_meta(oldParentID uint64, oldName string, newParentID uint64, newN
 	}
 
 	tx.Commit()
+
+	err = DB_Recalculate_Nlink(oldParentID)
+	if err != nil {
+		fmt.Println("Recalculate Nlink faild")
+		fmt.Println(err)
+	}
+	err = DB_Recalculate_Nlink(newParentID)
+	if err != nil {
+		fmt.Println("Recalculate Nlink faild")
+		fmt.Println(err)
+	}
+
 	return fs.OK
+}
+
+func DB_read_block() {
+
+}
+func DB_write_block() {
+
+}
+
+func DB_Recalculate_Nlink(parentID uint64) error {
+	query := `
+		UPDATE meta 
+		SET nlink = 2 + (
+			SELECT COUNT(*) 
+			FROM meta c 
+			WHERE c.parent_id = ? AND c.is_deleted = 0 AND (c.mode & ?) = ?
+		)
+		WHERE id = ?`
+
+	_, err := db.Exec(query, parentID, syscall.S_IFMT, syscall.S_IFDIR, parentID)
+	return err
 }

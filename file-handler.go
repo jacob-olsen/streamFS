@@ -36,33 +36,6 @@ func (f *StreamFile) Write(ctx context.Context, fh fs.FileHandle, data []byte, o
 
 	return uint32(len(data)), 0
 }
-func (r *StreamRoot) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	caller, _ := fuse.FromContext(ctx)
-	mode = mode | syscall.S_IFREG
-
-	inod, err := DB_mkMeta(r.StableAttr().Ino, name, caller.Uid, caller.Gid, mode)
-	if err != nil {
-		return nil, nil, 0, syscall.EIO
-	}
-
-	out.Attr.Ino = inod
-	out.Attr.Mode = mode
-	out.Attr.Uid = caller.Uid
-	out.Attr.Gid = caller.Gid
-	out.Attr.Size = 0
-
-	now := uint64(time.Now().Unix())
-	out.Attr.Atime = now
-	out.Attr.Mtime = now
-	out.Attr.Ctime = now
-
-	child := r.NewInode(ctx, &StreamFile{}, fs.StableAttr{
-		Mode: mode,
-		Ino:  inod,
-	})
-
-	return child, &StreamFile{}, 0, fs.OK
-}
 func (r *StreamFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	_, _, mode, size, uid, gid, mtime, atime, ctime, mising := DB_Getattr(r.StableAttr().Ino)
 	if mising {

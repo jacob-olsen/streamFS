@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"syscall"
 	"time"
 
+	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
@@ -251,4 +253,57 @@ func DB_rm_meta(parentID uint64, name string) (mising bool) {
 
 	tx.Commit()
 	return false
+}
+func DB_rename_meta(oldParentID uint64, oldName string, newParentID uint64, newName string) syscall.Errno {
+	tx, err := db.Begin()
+	if err != nil {
+		return syscall.EIO
+	}
+
+	// 1. THE ASSASSINATION CHECK: Does the target already exist?
+	var targetID uint64
+	err = tx.QueryRow(`
+        SELECT id FROM meta 
+        WHERE parent_id = ? AND name = ? AND is_deleted = 0`,
+		newParentID, newName).Scan(&targetID)
+
+	if err == nil {
+		// The target exists! We must soft-delete it to make room.
+		// (Note: If this is a folder, Linux usually checks if it's empty first,
+		// but for files, it just nukes them).
+		_, err = tx.Exec("UPDATE meta SET is_deleted=1, is_dirty=1 WHERE id=?", targetID)
+		if err != nil {
+			tx.Rollback()
+			return syscall.EIO
+		}
+	}
+
+	// 2. Move/Rename our actual file into the newly cleared spot
+	res, err := tx.Exec(`
+        UPDATE meta 
+        SET name = ?, parent_id = ?, is_dirty = 1 
+        WHERE parent_id = ? AND name = ? AND is_deleted = 0`,
+		newName, newParentID, oldParentID, oldName)
+
+	if err != nil {
+		tx.Rollback()
+		return syscall.EIO
+	}
+
+	// Did our source file actually exist?
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		tx.Rollback()
+		return syscall.ENOENT
+	}
+
+	// 3. Update timestamps for the folders
+	now := uint64(time.Now().Unix())
+	tx.Exec("UPDATE meta SET mtime=?, ctime=?, is_dirty=1 WHERE id=?", now, now, oldParentID)
+	if oldParentID != newParentID {
+		tx.Exec("UPDATE meta SET mtime=?, ctime=?, is_dirty=1 WHERE id=?", now, now, newParentID)
+	}
+
+	tx.Commit()
+	return fs.OK
 }

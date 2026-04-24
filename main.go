@@ -84,7 +84,6 @@ func main() {
 		for true {
 			uErr := server.Unmount()
 			if uErr == nil {
-				log.Println("Unmount successful.")
 				break
 			}
 			log.Printf("Unmount busy/failed (%v). Retrying in 1s...", uErr)
@@ -93,4 +92,5 @@ func main() {
 	}()
 
 	server.Wait()
+	log.Println("Unmount successful.")
 }

@@ -24,6 +24,17 @@ func initDB(dbPath string) {
 		log.Fatalf("Database unreachable: %v", err)
 	}
 
+	pragmaQuery := `
+        PRAGMA journal_mode = WAL;       -- Enables concurrent reads/writes
+        PRAGMA busy_timeout = 5000;      -- Waits 5 seconds instead of throwing SQLITE_BUSY
+        PRAGMA synchronous = NORMAL;     -- Speeds up WAL mode
+        PRAGMA foreign_keys = ON;        -- REQUIRED for your ON DELETE CASCADE to work!
+    `
+	_, err = db.Exec(pragmaQuery)
+	if err != nil {
+		log.Fatalf("Failed to set PRAGMAs: %v", err)
+	}
+
 	query := `
 	CREATE TABLE IF NOT EXISTS meta (
     	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -306,11 +317,111 @@ func DB_rename_meta(oldParentID uint64, oldName string, newParentID uint64, newN
 	return fs.OK
 }
 
-func DB_read_block() {
+func DB_read_block(inode uint64, blockNum int64) ([]byte, error) {
+	var dataID int64
+	var blockBytes []byte
+	query := `
+        SELECT f.data_id, d.bytes 
+        FROM file_map f
+        LEFT JOIN data_block d ON f.data_id = d.id
+        WHERE f.inode_id = ? AND f.block_num = ?`
 
+	// FIX: Added &dataID to match the SELECT statement
+	err := db.QueryRow(query, inode, blockNum).Scan(&dataID, &blockBytes)
+
+	if err == sql.ErrNoRows {
+		// Nothing in the DB at all.
+		return []byte{}, nil
+	} else if err != nil {
+		fmt.Printf("Error reading block %d for inode %d: %v\n", blockNum, inode, err)
+		return nil, err
+	}
+
+	// FIX: Handle the Sparse Hole (Zero Sentinel)
+	if dataID == -1 {
+		return []byte{}, nil
+	}
+
+	// Return exactly what was stored, no padding!
+	return blockBytes, nil
 }
-func DB_write_block() {
+func DB_write_block(inode uint64, blockNum int64, data []byte) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
+	now := time.Now().Unix()
+	var existingDataID int64
+
+	// 1. Check if we already have a mapping for this block
+	err = tx.QueryRow(`SELECT data_id FROM file_map WHERE inode_id = ? AND block_num = ?`, inode, blockNum).Scan(&existingDataID)
+	rowExists := (err == nil)
+
+	// ==========================================
+	// CASE 1: THE ZERO SENTINEL (Sparse Hole)
+	// ==========================================
+	if len(data) == 0 {
+		// If there is old data, we MUST delete it so it doesn't become a ghost
+		if rowExists && existingDataID > -1 {
+			_, err = tx.Exec(`DELETE FROM data_block WHERE id = ?`, existingDataID)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Point the map to -1 (our magic Void ID)
+		_, err = tx.Exec(`
+			INSERT INTO file_map (inode_id, block_num, data_id) 
+			VALUES (?, ?, -1)
+			ON CONFLICT(inode_id, block_num) DO UPDATE SET data_id = -1;`,
+			inode, blockNum)
+
+		if err != nil {
+			return err
+		}
+
+		return tx.Commit()
+	}
+
+	// ==========================================
+	// CASE 2: REAL DATA (len > 0)
+	// ==========================================
+	if !rowExists || existingDataID == -1 {
+		// It's a new block OR we are overwriting a Zero Sentinel.
+		// Insert the actual bytes into data_block first.
+		res, err := tx.Exec(`INSERT INTO data_block (atime, is_dirty, bytes) VALUES (?, 1, ?)`, now, data)
+		if err != nil {
+			return err
+		}
+
+		newDataID, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+
+		// Link the map to the new real ID
+		_, err = tx.Exec(`
+			INSERT INTO file_map (inode_id, block_num, data_id) 
+			VALUES (?, ?, ?)
+			ON CONFLICT(inode_id, block_num) DO UPDATE SET data_id = excluded.data_id;`,
+			inode, blockNum, newDataID)
+
+		if err != nil {
+			return err
+		}
+
+	} else {
+		// Normal Overwrite. The block exists, and it has a real ID.
+		// We just swap out the bytes in the existing data_block row.
+		_, err = tx.Exec(`UPDATE data_block SET bytes = ?, atime = ?, is_dirty = 1 WHERE id = ?`, data, now, existingDataID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func DB_Recalculate_Nlink(parentID uint64) error {

@@ -239,6 +239,11 @@ func (r *StreamRoot) Create(ctx context.Context, name string, flags uint32, mode
 	return child, &StreamFile{}, 0, fs.OK
 }
 func (r *StreamRoot) Rename(ctx context.Context, name string, newGroup fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+
+	if flags != 0 {
+		return syscall.ENOSYS
+	}
+
 	newDirNode := newGroup.EmbeddedInode()
 	newParentID := newDirNode.StableAttr().Ino
 
